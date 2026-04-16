@@ -1,0 +1,6 @@
+1.파이썬 3 설치
+2.pip install sqlglot
+3.파이썬 코드가 있는 레벨에 input_sql 폴더를 만들고 쿼리문들을 넣기.
+4.cmd창 열기
+5.cd C:\Users\mail8\Desktop\테이블 추출 테스트
+6.python extract_table_name.py

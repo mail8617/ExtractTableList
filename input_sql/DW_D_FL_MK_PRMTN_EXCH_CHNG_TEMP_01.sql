@@ -1,0 +1,163 @@
+/**********  UQ_DELETE_01  ****************************************************/
+
+
+EXECUTE IMMEDIATE 'TRUNCATE TABLE FL_MK_PRMTN_EXCH_CHNG_TEMP';
+
+
+
+
+
+/**********  UQ_INSERT_01  ****************************************************/
+
+
+EXECUTE IMMEDIATE 'ALTER SESSION ENABLE PARALLEL DML';
+
+INSERT /*+ APPEND */
+  INTO FL_MK_PRMTN_EXCH_CHNG_TEMP
+SELECT STR_CD,STD_DT,EXCH_NO,PRMTNCD, INTG_MEMB_NO, SYSDATE
+     , MAX(CHNG_VIP_NO) CHNG_VIP_NO
+FROM (
+SELECT /*+ USE_HASH(T1 T2) PARALLEL(4) */
+       DISTINCT T1.STR_CD
+     , T1.SL_DT           AS STD_DT
+     , T1.EXCH_NO
+     , T2.PRMTNCD
+     , NVL(T4.INTG_MEMB_NO, T5.INTG_MEMB_NO) AS INTG_MEMB_NO
+     , SYSDATE            AS LOAD_DTTM
+     , T3.VIP_NO          AS CHNG_VIP_NO
+  FROM WL_SL_SALE_HDR T1  /* WL_SL_판매 */
+ INNER JOIN WL_SL_SALE_HDR_DC T2  /* WL_SL_판매할인헤더 */
+    ON T1.STR_CD  = T2.STR_CD
+   AND T1.SL_DT   = T2.SL_DT
+   AND T1.EXCH_NO = T2.EXCH_NO
+   AND NVL(T2.PRMTNCD, '0') <> '0'
+  LEFT OUTER JOIN WL_SL_IMGN_CUST_INFO T3  /* WL_SL_출입국고객정보 */
+    ON T1.IMGN_CUST_SEQ = T3.IMGN_CUST_SEQ
+  LEFT OUTER JOIN
+      (
+       SELECT /*+ PARALLEL(4) */
+              T.NATLT_CD
+            , T.PSPT_RCGNT_NO
+            , T.BIRTHDT
+            , MAX(T.INTG_MEMB_NO) AS INTG_MEMB_NO
+         FROM D_INTG_MEMB T /* D_통합회원 */
+        WHERE T.NATLT_CD <> 'z'
+          AND T.PSPT_RCGNT_NO IS NOT NULL
+          AND T.BIRTHDT       IS NOT NULL
+        GROUP BY T.NATLT_CD
+               , T.PSPT_RCGNT_NO
+               , T.BIRTHDT
+      ) T4
+   ON T3.NATLT_CD      = T4.NATLT_CD
+  AND T3.PSPT_RCGNT_NO = T4.PSPT_RCGNT_NO
+  AND T3.BIRTHDT       = T4.BIRTHDT
+  LEFT OUTER JOIN (
+       SELECT /*+ PARALLEL(4) */
+              T.VIP_NO
+            , MAX(T.INTG_MEMB_NO) AS INTG_MEMB_NO
+         FROM D_INTG_MEMB T /* D_통합회원 */
+        WHERE T.VIP_NO  IS NOT NULL
+        GROUP BY T.VIP_NO
+     ) T5
+    ON T3.VIP_NO = T5.VIP_NO
+ WHERE (   T2.SL_DT     BETWEEN '$$[DW_STRT_DT]' AND '$$[DW_END_DT]'
+        OR T2.RGST_DTTM BETWEEN TO_DATE('$$[DW_STRT_DT]','YYYYMMDD') AND TO_DATE('$$[DW_END_DT]','YYYYMMDD') + 0.99999
+        OR T2.CHNG_DTTM BETWEEN TO_DATE('$$[DW_STRT_DT]','YYYYMMDD') AND TO_DATE('$$[DW_END_DT]','YYYYMMDD') + 0.99999
+       )
+ UNION
+SELECT /*+ PARALLEL(4) */
+       STR_CD
+     , STD_DT
+     , MAX(EXCH_NO)    AS EXCH_NO
+     , PRMTNCD
+     , INTG_MEMB_NO
+     , SYSDATE         AS LOAD_DTTM
+     , MAX(VIP_NO)     AS CHNG_VIP_NO
+  FROM (
+       SELECT STR_CD
+            , PRESTAT_DT  AS STD_DT
+            , NULL        AS EXCH_NO
+            , PRMTNCD
+            , INTG_MEMB_NO
+            , VIP_NO
+         FROM WL_MK_PRMTN_FGF_PRESTAT /* WL_MK_행사사은품증정 */
+        WHERE (PRESTAT_DT  BETWEEN '$$[DW_STRT_DT]' AND '$$[DW_END_DT]'
+           OR  PYMT_STD_DT BETWEEN '$$[DW_STRT_DT]' AND '$$[DW_END_DT]'
+           OR  RGST_DTTM   BETWEEN TO_DATE('$$[DW_STRT_DT]','YYYYMMDD') AND TO_DATE('$$[DW_END_DT]','YYYYMMDD') + 0.99999
+           OR  CHNG_DTTM   BETWEEN TO_DATE('$$[DW_STRT_DT]','YYYYMMDD') AND TO_DATE('$$[DW_END_DT]','YYYYMMDD') + 0.99999)
+        UNION ALL
+       SELECT T2.STR_CD
+            , T1.PRESTAT_DT
+            , NULL
+            , T2.PRMTNCD
+            , T1.INTG_MEMB_NO
+            , T1.VIP_NO
+         FROM WL_MK_PRMTN_FGF_PRESTAT T1   /* WL_MK_행사사은품증정 */
+        INNER JOIN WL_MK_PRMTN_FGF_PRESTAT_DTL T2 /* WL_MK_행사사은품증정상세 */
+           ON T1.STR_CD         = T2.STR_CD
+          AND T1.PRMTNCD        = T2.PRMTNCD
+          AND T1.PRESTAT_DVS_CD = T2.PRESTAT_DVS_CD
+          AND T1.PRESTAT_SN     = T2.PRESTAT_SN
+        WHERE (T2.RGST_DTTM BETWEEN TO_DATE('$$[DW_STRT_DT]','YYYYMMDD') AND TO_DATE('$$[DW_END_DT]','YYYYMMDD') + 0.99999
+           OR  T2.CHNG_DTTM BETWEEN TO_DATE('$$[DW_STRT_DT]','YYYYMMDD') AND TO_DATE('$$[DW_END_DT]','YYYYMMDD') + 0.99999)
+        UNION ALL
+       SELECT T1.STR_CD
+            , T1.SALES_DT
+            , T1.EXCH_NO
+            , T1.PRMTNCD
+            , T2.INTG_MEMB_NO
+            , T2.VIP_NO
+         FROM WL_MK_PRMTN_FGF_PRESTAT_EXCH T1 /* WL_MK_행사사은품증정교환권 */
+        INNER JOIN FL_SL_EXCH_SL T2  /* FL_SL_교환권판매 */
+           ON T1.SALES_DT = T2.SL_DT
+          AND T1.STR_CD   = T2.STR_CD
+          AND T1.EXCH_NO  = T2.EXCH_NO
+        WHERE (T1.SALES_DT  BETWEEN '$$[DW_STRT_DT]' AND '$$[DW_END_DT]'
+           OR  T1.RGST_DTTM BETWEEN TO_DATE('$$[DW_STRT_DT]','YYYYMMDD') AND TO_DATE('$$[DW_END_DT]','YYYYMMDD') + 0.99999
+           OR  T1.CHNG_DTTM BETWEEN TO_DATE('$$[DW_STRT_DT]','YYYYMMDD') AND TO_DATE('$$[DW_END_DT]','YYYYMMDD') + 0.99999)
+       ) T
+ GROUP BY STR_CD
+        , STD_DT
+        , PRMTNCD
+        , INTG_MEMB_NO
+ UNION
+ /* LDFPAY 유발매출 */
+SELECT /*+ PARALLEL(4) */
+       T1.STR_CD
+     , T1.LDFP_HIST_HAPN_DT
+     , T1.EXCH_NO
+     , T1.PRMTNCD
+     , T2.INTG_MEMB_NO
+     , SYSDATE         AS LOAD_DTTM
+     , NVL(T2.VIP_NO, T3.VIP_NO)   AS CHNG_VIP_NO
+
+  FROM FL_MK_LDFP_ACMLT_USE_PTCLS T1 /* LDFPAY적립사용내역 */
+ INNER JOIN FL_SL_EXCH_SL T2         /* FL_SL_교환권판매 */
+    ON T1.LDFP_HIST_HAPN_DT = T2.SL_DT
+   AND T1.STR_CD            = T2.STR_CD
+   AND T1.EXCH_NO           = T2.EXCH_NO
+ INNER JOIN D_PRMTN T3  /* D_행사 */
+    ON T1.PRMTNCD           = T3.PRMTNCD
+   AND T1.LDFP_HIST_HAPN_DT BETWEEN T3.PRMTN_STRT_DT AND (CASE WHEN T3.PRMTN_END_DT < '99991201' THEN TO_CHAR(TO_DATE(T3.PRMTN_END_DT,'YYYYMMDD') + 30,'YYYYMMDD') ELSE T3.PRMTN_END_DT END)
+LEFT OUTER JOIN D_INTG_MEMB T3 
+   ON T1.INTG_MEMB_NO = T3.INTG_MEMB_NO
+ WHERE T1.LDFP_ACTI_YN      = 'Y'
+   AND T1.LDFP_NO_STAT_CD   <> '00'
+   AND T1.ACMLT_USE_DVS_CD  = '2'  /* 사용 */
+   AND T3.PRMTN_LGCSF_CD    = '005'  /* LDFPAY */
+   AND T1.LDFP_HIST_HAPN_DT BETWEEN '$$[DW_STRT_DT]' AND '$$[DW_END_DT]'
+)
+GROUP BY STR_CD,STD_DT,EXCH_NO,PRMTNCD, INTG_MEMB_NO
+;
+
+O_COUNT := SQL%ROWCOUNT;
+COMMIT;
+
+
+
+
+
+/**********  UQ_ANALYZE_01  ***************************************************/
+
+
+DBMS_STATS.GATHER_TABLE_STATS('LDF_DW', 'FL_MK_PRMTN_EXCH_CHNG_TEMP', CASCADE=>TRUE, METHOD_OPT=>'FOR ALL INDEXED COLUMNS', DEGREE=>4, ESTIMATE_PERCENT=>15);

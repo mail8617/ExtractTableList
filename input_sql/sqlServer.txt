@@ -1,0 +1,16 @@
+/* [SQL Server] 대괄호 식별자 및 T-SQL 전용 문법 테스트 */
+WITH RankedOrders AS (
+    SELECT OrderID, CustomerID, 
+           ROW_NUMBER() OVER(PARTITION BY CustomerID ORDER BY OrderDate DESC) as rn
+    FROM [Sales].[Orders]
+)
+SELECT TOP 10
+    c.[CustomerName],
+    ro.[OrderID]
+FROM [Sales].[Customers] c
+INNER JOIN RankedOrders ro 
+   ON c.[CustomerID] = ro.[CustomerID]
+WHERE ro.rn = 1
+/*
+   AND c.Region IN (SELECT RegionID FROM [Sales].[Regions])
+*/

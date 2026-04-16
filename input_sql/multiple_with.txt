@@ -1,0 +1,64 @@
+/* [CASE 1: 다중 CTE 및 중첩 CTE 테스트]
+   - WITH 절 안에 임시 테이블이 여러 개(first_cte, second_cte) 있는 경우
+   - 임시 테이블끼리 조인하는 경우
+*/
+WITH first_cte AS (
+    SELECT id, name FROM public.base_users
+),
+second_cte AS (
+    SELECT f.id, o.amount
+    FROM first_cte f
+    JOIN sales.user_orders o ON f.id = o.user_id
+)
+SELECT * FROM second_cte sc
+JOIN core.final_table ft ON sc.id = ft.id;
+
+----------------------------------------------------------------------
+
+/* [CASE 2: DML (INSERT, UPDATE) 구문 테스트]
+   - SELECT 뿐만 아니라 데이터를 넣거나 수정하는 테이블도 잘 잡는지 확인
+*/
+INSERT INTO target_sales_db (dt, total_amount)
+SELECT current_date, sum(amount)
+FROM source_sales_data
+WHERE status = 'DONE';
+
+UPDATE hr.employee_records er
+SET er.salary = er.salary * 1.1
+WHERE er.dept_id IN (SELECT dept_id FROM hr.high_perf_departments);
+
+----------------------------------------------------------------------
+
+/* [CASE 3: 인라인 뷰 (FROM 절 서브쿼리) 및 다중 조인 테스트]
+   - FROM 절과 JOIN 절 안에 괄호로 묶인 또 다른 쿼리가 있는 경우
+   - 서브쿼리의 alias(a, b)와 혼동하지 않는지 확인
+*/
+SELECT a.*, b.val, c.config_name
+FROM (
+    SELECT id, MAX(dt) as max_dt 
+    FROM logs.raw_log_data 
+    GROUP BY id
+) a
+LEFT JOIN (
+    SELECT id, val FROM master.reference_data WHERE is_active = 'Y'
+) b ON a.id = b.id
+JOIN config_tables c ON a.id = c.target_id;
+
+----------------------------------------------------------------------
+
+/* [CASE 4: 악랄한(?) 주석과 섞인 구조]
+   - 아예 WITH 절 전체가 주석 처리된 경우
+   - 주석 기호가 혼재된 경우
+*/
+/*
+WITH deprecated_cte AS (
+    SELECT * FROM old_system_table_do_not_use
+)
+*/
+WITH valid_cte AS (
+    SELECT * FROM actual_valid_table
+)
+SELECT vc.*, ex.info
+FROM valid_cte vc
+JOIN external_info_db ex ON vc.id = ex.id -- JOIN old_history_table oh ON vc.id = oh.id
+WHERE vc.id IN (SELECT id FROM filter_list_table);
