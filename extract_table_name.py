@@ -4,7 +4,6 @@ import os
 import logging
 import re
 from datetime import datetime
-# import pandas as pd # pandas 라이브러리 제거
 
 # ==========================================
 # [환경 설정] 에러 보관함 및 로깅 세팅
@@ -110,7 +109,7 @@ def auto_parse_sql(sql_query):
 
 def fallback_extract_tables(sql_query):
     """
-    [최후의 보루] sqlglot 파싱이 완전히 실패했을 때 정규식으로 테이블 강제 추출
+    [최후의 보루] 정규식으로 테이블 강제 추출
     """
     clean_sql = re.sub(r'--.*', '', sql_query)
     clean_sql = re.sub(r'/\*.*?\*/', '', clean_sql, flags=re.DOTALL)
@@ -162,14 +161,14 @@ def extract_tables_from_query(sql_query):
                 if full_name and table_only_name not in cte_names:
                     actual_tables.add(full_name)
                     
-    # 2. [강력한 안전망] 파서가 실패하여 테이블을 단 1개도 찾지 못했을 경우 -> 정규식 특공대 투입!
+    # 2. 파서가 실패하여 테이블을 단 1개도 찾지 못했을 경우 -> 정규식으로 추출 시도
     if not actual_tables:
         logging.info("  -> 구문 분석에 실패하여 정규식(Regex) 안전망을 통해 테이블 추출을 시도합니다.")
         actual_tables = fallback_extract_tables(sql_query)
         
     return actual_tables # 고유한 테이블 이름 set을 반환합니다.
 
-def process_all_sql_files(input_folder, output_filepath):
+def process_all_sql_files(input_folder, output_table_mapping, output_table_list):
     if not os.path.exists(input_folder):
         logging.error(f"오류: '{input_folder}' 폴더를 찾을 수 없습니다. 폴더를 생성해주세요.")
         return
@@ -184,7 +183,9 @@ def process_all_sql_files(input_folder, output_filepath):
         return
 
     # CSV 출력을 위한 데이터 리스트 초기화
-    all_extracted_tables_data = [] 
+    all_extracted_tables_data = []
+    all_unique_tables = set() 
+    
     logging.info(f"총 {len(target_files)}개의 파일을 분석합니다...\n")
 
     for filepath in target_files:
@@ -207,7 +208,6 @@ def process_all_sql_files(input_folder, output_filepath):
             continue
         
         buffer_handler.clear() 
-        
         tables_in_file = extract_tables_from_query(sql_query)
         
         if not tables_in_file:
@@ -220,23 +220,36 @@ def process_all_sql_files(input_folder, output_filepath):
                 logging.warning(f"     ... 외 {len(unique_messages) - 3}건의 오류 존재")
         else:
             logging.info(f"  -> 분석 완료 (추출된 테이블: {len(tables_in_file)}개)")
-            # 각 파일에서 추출된 테이블을 데이터 리스트에 추가
-            # 테이블 이름을 정렬하여 출력 시 일관된 순서를 유지합니다.
             for table_name in sorted(list(tables_in_file)): 
                 all_extracted_tables_data.append([filename, table_name])
+            all_unique_tables.update(tables_in_file)
 
-    # 추출된 데이터를 CSV 파일로 직접 저장
+    # =================================================================
+    # [결과물 저장] 2개의 분리된 파일로 저장합니다.
+    # =================================================================
     if all_extracted_tables_data:
         try:
-            with open(output_filepath, 'w', encoding='utf-8-sig', newline='') as f: # newline=''은 CSV 파일에 불필요한 공백 라인이 생기지 않도록 합니다.
-                f.write("파일\t테이블명\n") # 헤더 작성, 탭으로 구분
+            # 1. 파일-테이블 매핑 CSV 저장 (콤마 대신 탭 분리 유지)
+            with open(output_table_mapping, 'w', encoding='utf-8-sig', newline='') as f:
+                f.write("파일\t테이블명\n") 
                 for row in all_extracted_tables_data:
-                    f.write(f"{row[0]}\t{row[1]}\n") # 데이터를 탭으로 구분
-            logging.info(f"\n✅ 전체 분석 완료! 총 {len(all_extracted_tables_data)}개의 파일-테이블 매핑 데이터가 '{output_filepath}'에 저장되었습니다.")
+                    f.write(f"{row[0]}\t{row[1]}\n")
+                    
+            # 2. 중복 없는 고유 테이블 리스트 CSV 저장
+            with open(output_table_list, 'w', encoding='utf-8-sig', newline='') as f:
+                f.write("테이블명\n")
+                for table_name in sorted(list(all_unique_tables)):
+                    f.write(f"{table_name}\n")
+
+            logging.info(f"\n✅ 전체 분석 완료! 결과가 2개의 파일로 저장되었습니다.")
+            logging.info(f"  1. 매핑 내역: '{output_table_mapping}'")
+            logging.info(f"  2. 고유 목록: '{output_table_list}'")
+            
         except Exception as e:
             logging.error(f"\n오류: CSV 파일 저장 중 문제가 발생했습니다: {e}")
     else:
         logging.info("\n✅ 전체 분석 완료! 추출된 테이블이 없어 CSV 파일이 생성되지 않았습니다.")
+
 
 # ==========================================
 # [실행부]
@@ -249,8 +262,9 @@ if __name__ == "__main__":
     os.makedirs(output_folder, exist_ok=True)
     os.makedirs(log_folder, exist_ok=True)
     
-    # CSV 파일로 저장할 것이므로 .csv 확장자를 사용합니다.
-    output_csv_file = os.path.join(output_folder, "table_list.csv") 
+    # 생성될 두 가지 결과 파일의 이름 및 경로 설정
+    output_table_mapping = os.path.join(output_folder, "table_mapping.csv") 
+    output_table_list = os.path.join(output_folder, "table_list.csv") 
     
     current_time = datetime.now().strftime("%Y%m%d_%H%M%S")
     log_filepath = os.path.join(log_folder, f"{current_time}_parser.log")
@@ -272,5 +286,5 @@ if __name__ == "__main__":
     root_logger.addHandler(console_handler)
     
     logging.info("=== SQL 파싱 자동화 스크립트 시작 ===")
-    process_all_sql_files(input_folder, output_csv_file)
+    process_all_sql_files(input_folder, output_table_mapping, output_table_list)
     logging.info(f"\n=== 작업 완료 (상세 로그 확인: {log_filepath}) ===")
