@@ -4,6 +4,7 @@ import os
 import logging
 import re
 from datetime import datetime
+# import pandas as pd # pandas 라이브러리 제거
 
 # ==========================================
 # [환경 설정] 에러 보관함 및 로깅 세팅
@@ -43,10 +44,10 @@ def auto_parse_sql(sql_query):
     query = re.sub(r'(?i)<foreach\b[^>]*>.*?</foreach>', "('dummy')", query, flags=re.DOTALL)
     
     # 3. MyBatis/XML 주석 제거
-    query = re.sub(r'', ' ', query, flags=re.DOTALL)
+    query = re.sub(r'<!--.*?-->', ' ', query, flags=re.DOTALL)
     
     # 4. 기타 MyBatis 제어 태그 제거 (태그 껍질만 날리고 알맹이는 보존)
-    mybatis_tags = r'</?(?:if|choose|when|otherwise|bind|sql|include|select|insert|update|delete)\b.*?>'
+    mybatis_tags = r'</?(?:if|choose|when|otherwise|bind|sql|include|select|insert|update|delete|set)\b.*?>'
     query = re.sub(mybatis_tags, ' ', query, flags=re.IGNORECASE | re.DOTALL)
     
     # 5. 바인딩 변수 치환 #{...}, ${...} -> '1'
@@ -55,11 +56,12 @@ def auto_parse_sql(sql_query):
     # 6. 오라클 전용 파싱 방해꾼 제거
     query = re.sub(r'(?i)\bON\s+OVERFLOW\s+TRUNCATE\b', ' ', query) # LISTAGG 내부 방해꾼 제거
     query = re.sub(r'(?i)\bNOLOGGING\b', ' ', query) # CREATE TABLE 내부 방해꾼 제거
+    query = re.sub(r'(?i)\bNOCOMMENTS\b', ' ', query) # ALTER TABLE ADD CONSTRAINT (WITH) NOCOMMENTS
     
     # 7. 세미콜론 강제 주입
     pattern = r'(?im)^(\s*)(CREATE\s+TABLE|DROP\s+TABLE|TRUNCATE\s+TABLE|MERGE\s|INSERT\s+(?:/\*.*?\*/\s*)?INTO|DELETE\s+FROM)'
     query = re.sub(pattern, r';\1\2', query)
-    
+        
     # --- 파싱 시도 ---
     for dialect in dialects_to_try:
         try:
@@ -80,7 +82,7 @@ def auto_parse_sql(sql_query):
         q_no_comment = re.sub(r'/\*.*?\*/', '', q_strip, flags=re.DOTALL)
         q_no_comment = re.sub(r'--.*', '', q_no_comment).strip()
         
-        if q_no_comment.upper().startswith(('EXEC', 'O_COUNT', 'COMMIT', 'ROLLBACK', 'DECLARE', 'BEGIN', '/', 'ALTER SESSION')):
+        if q_no_comment.upper().startswith(('EXEC', 'O_COUNT', 'COMMIT', 'ROLLBACK', 'DECLARE', 'BEGIN', '/', 'ALTER SESSION', 'GRANT', 'REVOKE')):
             continue
             
         parsed_success = False
@@ -119,10 +121,15 @@ def fallback_extract_tables(sql_query):
     
     tables = set()
     for tb in matches:
-        tb_lower = tb.lower()
+        tb_lower = tb.lower().replace('"', '').replace('`', '')
         # 예약어가 아닌 진짜 테이블명만 걸러냄
-        if tb_lower not in ('select', 'where', 'group', 'order', 'inner', 'left', 'right', 'outer', 'cross', 'from', 'join', 'on', 'using', 'as', 'lateral', 'natural'):
-            tables.add(tb_lower)
+        reserved_keywords = {
+            'select', 'where', 'group', 'order', 'inner', 'left', 'right', 'outer', 'cross', 'from', 'join', 'on', 'using', 'as', 'lateral', 'natural'
+        }
+        
+        if tb_lower and tb_lower not in reserved_keywords: # tb_lower가 비어있지 않은지 확인
+            if not tb_lower.startswith('.') and not tb_lower.endswith('.'): # .으로 시작하거나 끝나지 않는지 확인
+                tables.add(tb_lower)
     return tables
 
 def get_full_table_name(table_node):
@@ -157,23 +164,7 @@ def extract_tables_from_query(sql_query):
         logging.info("  -> 구문 분석에 실패하여 정규식(Regex) 안전망을 통해 테이블 추출을 시도합니다.")
         actual_tables = fallback_extract_tables(sql_query)
         
-    if not actual_tables:
-        return actual_tables
-
-    # 3. 중복 제거
-    sorted_raw = sorted(list(actual_tables), key=len, reverse=True)
-    final_tables = set()
-    
-    for tb in sorted_raw:
-        is_duplicate = False
-        for existing in final_tables:
-            if existing == tb or existing.endswith("." + tb):
-                is_duplicate = True
-                break
-        if not is_duplicate:
-            final_tables.add(tb)
-            
-    return final_tables
+    return actual_tables # 고유한 테이블 이름 set을 반환합니다.
 
 def process_all_sql_files(input_folder, output_filepath):
     if not os.path.exists(input_folder):
@@ -189,7 +180,8 @@ def process_all_sql_files(input_folder, output_filepath):
         logging.warning(f"'{input_folder}' 폴더 안에 .sql 또는 .txt 파일이 없습니다.")
         return
 
-    all_extracted_tables = set()
+    # CSV 출력을 위한 데이터 리스트 초기화
+    all_extracted_tables_data = [] 
     logging.info(f"총 {len(target_files)}개의 파일을 분석합니다...\n")
 
     for filepath in target_files:
@@ -211,40 +203,51 @@ def process_all_sql_files(input_folder, output_filepath):
             logging.info("  -> 내용이 비어있어 스킵합니다.")
             continue
         
-        buffer_handler.clear()
+        buffer_handler.clear() 
         
         tables_in_file = extract_tables_from_query(sql_query)
         
         if not tables_in_file:
             logging.warning("  -> 경고: 파일 내에서 유효한 테이블 쿼리를 추출하지 못했습니다.")
-            unique_messages = list(dict.fromkeys(buffer_handler.messages))
-            for msg in unique_messages[:3]:
+            unique_messages = list(dict.fromkeys(buffer_handler.messages)) 
+            for msg in unique_messages[:3]: 
                 logging.warning(f"     [실패 원인] {msg}")
             
             if len(unique_messages) > 3:
                 logging.warning(f"     ... 외 {len(unique_messages) - 3}건의 오류 존재")
         else:
             logging.info(f"  -> 분석 완료 (추출된 테이블: {len(tables_in_file)}개)")
-            all_extracted_tables.update(tables_in_file)
+            # 각 파일에서 추출된 테이블을 데이터 리스트에 추가
+            # 테이블 이름을 정렬하여 출력 시 일관된 순서를 유지합니다.
+            for table_name in sorted(list(tables_in_file)): 
+                all_extracted_tables_data.append([filename, table_name])
 
-    sorted_tables = sorted(list(all_extracted_tables))
-    with open(output_filepath, 'w', encoding='utf-8') as f:
-        for tb in sorted_tables:
-            f.write(f"{tb}\n")
-            
-    logging.info(f"\n✅ 전체 분석 완료! 총 {len(sorted_tables)}개의 고유 테이블이 '{output_filepath}'에 저장되었습니다.")
+    # 추출된 데이터를 CSV 파일로 직접 저장
+    if all_extracted_tables_data:
+        try:
+            with open(output_filepath, 'w', encoding='utf-8-sig', newline='') as f: # newline=''은 CSV 파일에 불필요한 공백 라인이 생기지 않도록 합니다.
+                f.write("파일\t테이블명\n") # 헤더 작성, 탭으로 구분
+                for row in all_extracted_tables_data:
+                    f.write(f"{row[0]}\t{row[1]}\n") # 데이터를 탭으로 구분
+            logging.info(f"\n✅ 전체 분석 완료! 총 {len(all_extracted_tables_data)}개의 파일-테이블 매핑 데이터가 '{output_filepath}'에 저장되었습니다.")
+        except Exception as e:
+            logging.error(f"\n오류: CSV 파일 저장 중 문제가 발생했습니다: {e}")
+    else:
+        logging.info("\n✅ 전체 분석 완료! 추출된 테이블이 없어 CSV 파일이 생성되지 않았습니다.")
 
 # ==========================================
 # [실행부]
 # ==========================================
 if __name__ == "__main__":
     input_folder = "input_sql"
-    output_folder = "output_txt"
+    output_folder = "output_txt" 
     log_folder = "log"
 
     os.makedirs(output_folder, exist_ok=True)
     os.makedirs(log_folder, exist_ok=True)
-    output_txt_file = os.path.join(output_folder, "table_list.txt")
+    
+    # CSV 파일로 저장할 것이므로 .csv 확장자를 사용합니다.
+    output_csv_file = os.path.join(output_folder, "table_list.csv") 
     
     current_time = datetime.now().strftime("%Y%m%d_%H%M%S")
     log_filepath = os.path.join(log_folder, f"{current_time}_parser.log")
@@ -266,5 +269,5 @@ if __name__ == "__main__":
     root_logger.addHandler(console_handler)
     
     logging.info("=== SQL 파싱 자동화 스크립트 시작 ===")
-    process_all_sql_files(input_folder, output_txt_file)
+    process_all_sql_files(input_folder, output_csv_file)
     logging.info(f"\n=== 작업 완료 (상세 로그 확인: {log_filepath}) ===")
