@@ -122,9 +122,12 @@ def fallback_extract_tables(sql_query):
     tables = set()
     for tb in matches:
         tb_lower = tb.lower().replace('"', '').replace('`', '')
-        # 예약어가 아닌 진짜 테이블명만 걸러냄
+        # reserved_keywords(예약어)에 포함된 이름은 테이블명이 될 수 없음
         reserved_keywords = {
-            'select', 'where', 'group', 'order', 'inner', 'left', 'right', 'outer', 'cross', 'from', 'join', 'on', 'using', 'as', 'lateral', 'natural'
+            'select', 'where', 'group', 'order', 'inner', 'left', 'right', 'outer', 'cross', 'from', 'join', 'on', 'using', 'as', 'lateral', 'natural',
+            'insert', 'update', 'delete', 'merge', 'into', 'values', 'set', 'distinct', 'having', 'union', 'except', 'intersect', 'limit', 'offset',
+            'fetch', 'row', 'rows', 'only', 'next', 'first', 'prior', 'start', 'connect', 'by', 'level', 'rownum', 'dual', 'sysdate', 'systimestamp',
+            'with' 
         }
         
         if tb_lower and tb_lower not in reserved_keywords: # tb_lower가 비어있지 않은지 확인
