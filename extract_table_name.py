@@ -51,6 +51,12 @@ def auto_parse_sql(sql_query):
     
     # 5. 바인딩 변수 치환 #{...}, ${...} -> '1'
     query = re.sub(r'[#$]\{.*?\}', "'1'", query)
+
+    # 5-1. 커스텀 파라미터 치환: #0[값 (날짜)], '#0'[값 (텍스트)] 등 -> '1'
+    query = re.sub(r"'?#\d+'?\[.*?\]", "'1'", query)
+    
+    # 5-2. 백틱(`) 기호 제거 (일반 식별자로 변환하여 파싱 에러 방지)
+    query = query.replace('`', '')
     
     # 6. 오라클 전용 파싱 방해꾼 제거
     query = re.sub(r'(?i)\bON\s+OVERFLOW\s+TRUNCATE\b', ' ', query) # LISTAGG 내부 방해꾼 제거
