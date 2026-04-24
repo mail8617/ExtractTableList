@@ -57,6 +57,9 @@ def auto_parse_sql(sql_query):
     
     # 5-2. 백틱(`) 기호 제거 (일반 식별자로 변환하여 파싱 에러 방지)
     query = query.replace('`', '')
+
+    # 5-3. "[Analytical engine calculation steps:" 로 시작하는 부분부터 파일 끝까지 통째로 날림
+    query = re.sub(r'\[Analytical engine calculation steps:.*', '', query, flags=re.IGNORECASE | re.DOTALL)
     
     # 6. 오라클 전용 파싱 방해꾼 제거
     query = re.sub(r'(?i)\bON\s+OVERFLOW\s+TRUNCATE\b', ' ', query) # LISTAGG 내부 방해꾼 제거
