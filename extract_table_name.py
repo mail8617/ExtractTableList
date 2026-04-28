@@ -1,3 +1,4 @@
+import sys
 import sqlglot
 from sqlglot import exp
 import os
@@ -264,16 +265,26 @@ def process_all_sql_files(input_folder, output_table_mapping, output_table_list)
 # [실행부]
 # ==========================================
 if __name__ == "__main__":
-    input_folder = "input_sql"
-    output_folder = "output_txt" 
-    log_folder = "log"
+    # 1. 실행 파일(.exe) 또는 스크립트(.py)의 실제 위치 파악
+    if getattr(sys, 'frozen', False):
+        # .exe 파일로 실행 중일 때
+        base_path = os.path.dirname(sys.executable)
+    else:
+        # .py 스크립트로 실행 중일 때
+        base_path = os.path.dirname(os.path.abspath(__file__))
 
+    # 2. 모든 경로를 base_path 기준으로 설정 (절대 경로화)
+    input_folder = os.path.join(base_path, "input_sql")
+    output_folder = os.path.join(base_path, "output_txt") 
+    log_folder = os.path.join(base_path, "log")
+
+    # 3. 폴더가 없으면 자동 생성 (배포 편의성)
     os.makedirs(output_folder, exist_ok=True)
     os.makedirs(log_folder, exist_ok=True)
     
-    # 생성될 두 가지 결과 파일의 이름 및 경로 설정
+    # 4. 출력 파일 및 로그 경로 설정
     output_table_mapping = os.path.join(output_folder, "table_mapping.csv") 
-    output_table_list = os.path.join(output_folder, "table_list.csv") 
+    output_table_list = os.path.join(output_folder, "table_list.csv")
     
     current_time = datetime.now().strftime("%Y%m%d_%H%M%S")
     log_filepath = os.path.join(log_folder, f"{current_time}_parser.log")
