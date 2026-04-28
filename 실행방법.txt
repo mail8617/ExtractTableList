@@ -1,9 +1,0 @@
-1.파이썬 3 설치
-
-2.cmd 창 열어서 sqlglot 설치 ->  pip install sqlglot
-
-3.파이썬 코드가 있는 레벨에 input_sql 폴더를 만들고 쿼리문 파일들을 넣기.
- 
-4.cmd 창에서 파이썬 파일이 있는 디렉토리로 이동 ->  cd [파이썬 파일 경로] 
-
-5.cmd 창에서 파이썬 파일 실행 ->  python extract_table_name.py
